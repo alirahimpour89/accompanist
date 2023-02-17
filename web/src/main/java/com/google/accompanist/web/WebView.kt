@@ -18,6 +18,7 @@ package com.google.accompanist.web
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Bundle
 import android.view.ViewGroup.LayoutParams
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -38,8 +39,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
@@ -83,6 +84,7 @@ fun WebView(
     factory: ((Context) -> WebView)? = null
 ) {
     var webView by remember { mutableStateOf<WebView?>(null) }
+    var bundle by rememberSaveable { mutableStateOf<Bundle?>(null) }
 
     BackHandler(captureBackPresses && navigator.canGoBack) {
         webView?.goBack()
@@ -92,33 +94,16 @@ fun WebView(
         with(navigator) { webView?.handleNavigationEvents() }
     }
 
-    LaunchedEffect(webView, state) {
-        if (webView == null) return@LaunchedEffect
-
-        snapshotFlow { state.content }.collect { content ->
-            when (content) {
-                is WebContent.Url -> {
-                    webView?.loadUrl(content.url, content.additionalHttpHeaders)
-                }
-
-                is WebContent.Data -> {
-                    webView?.loadDataWithBaseURL(
-                        content.baseUrl,
-                        content.data,
-                        content.mimeType,
-                        content.encoding,
-                        content.historyUrl
-                    )
-                }
-            }
-        }
-    }
-
     val currentOnDispose by rememberUpdatedState(onDispose)
 
     webView?.let {
         DisposableEffect(it) {
-            onDispose { currentOnDispose(it) }
+            onDispose {
+                bundle = Bundle().apply {
+                    it.saveState(this)
+                }
+                currentOnDispose(it)
+            }
         }
     }
 
@@ -157,6 +142,29 @@ fun WebView(
 
                     webChromeClient = chromeClient
                     webViewClient = client
+
+                    when(bundle) {
+                        null -> {
+                            when (val content = state.content) {
+                                is WebContent.Url -> {
+                                    loadUrl(content.url, content.additionalHttpHeaders)
+                                }
+                                is WebContent.Data -> {
+                                    loadDataWithBaseURL(
+                                        content.baseUrl,
+                                        content.data,
+                                        content.mimeType,
+                                        content.encoding,
+                                        content.historyUrl
+                                    )
+                                }
+                            }
+                        }
+                        else -> {
+                            restoreState(bundle!!)
+                            bundle = null
+                        }
+                    }
                 }.also { webView = it }
 
                 // Workaround a crash on certain devices that expect WebView to be
